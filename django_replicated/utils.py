@@ -1,6 +1,7 @@
 # coding: utf-8
 from __future__ import unicode_literals
 
+import etcd
 from django import db
 
 
@@ -21,3 +22,17 @@ class Routers(object):
 
 
 routers = Routers()
+
+
+class ETCD(object):
+    master_path = "/etcd-root-path/jiajia-moha/election/master/id"
+
+    def __init__(self, host, port):
+        self._client = etcd.Client(
+            host=host, port=port,
+            allow_reconnect=True,
+        )
+
+    def get_mysql_master(self):
+        master_id = self._client.get(self.master_path)
+        return master_id

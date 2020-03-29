@@ -5,6 +5,8 @@ import logging
 import random
 from threading import local
 
+from django_replicated.utils import ETCD
+
 log = logging.getLogger(__name__)
 
 
@@ -22,6 +24,8 @@ class ReplicationRouter(object):
         self.CHECK_STATE_ON_WRITE = settings.REPLICATED_CHECK_STATE_ON_WRITE
 
         self.all_allowed_aliases = [self.DEFAULT_DB_ALIAS] + self.SLAVES
+
+        self._etcd = ETCD(settings.ETCD_REPLICATED['host'], settings.ETCD_REPLICATED['port'])
 
     def reset(self):
         self._context.state_stack = []
@@ -73,14 +77,27 @@ class ReplicationRouter(object):
         '''
         self.context.state_stack.pop()
 
+    def get_master_name(self):
+        from django.conf import settings
+        master_host = self._etcd.get_mysql_master()
+
+        for name, database in settings.DATABASES.items():
+            if database['HOST'] == master_host:
+                return name
+        raise ValueError("Given node not found")
+
     def db_for_write(self, *args, **kwargs):
         if self.CHECK_STATE_ON_WRITE and self.state() != 'master':
-            raise RuntimeError('Trying to access master database in slave state')
-
-        self.context.chosen['master'] = self.DEFAULT_DB_ALIAS
-
-        log.debug('db_for_write: %s', self.DEFAULT_DB_ALIAS)
-        return self.DEFAULT_DB_ALIAS
+            try:
+                master_name = self.get_master_name()
+                self.use_state("master")
+            except ValueError:
+                raise RuntimeError('Trying to access master database in slave state')
+        else:
+            master_name = self.DEFAULT_DB_ALIAS
+        self.context.chosen['master'] = master_name
+        log.debug('db_for_write: %s', master_name)
+        return master_name
 
     def db_for_read(self, *args, **kwargs):
         if self.state() == 'master':
